@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
+import { Response as UndiciResponse } from "undici";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { StoredMcpOAuthProvider } from "./mcp-oauth.js";
 import {
@@ -19,6 +20,35 @@ const TEST_NETWORK = {
 };
 
 describe("MCP transport seam", () => {
+  it("normalizes package-undici responses into the global Response realm", async () => {
+    const safeFetch = secureFetch(
+      new URL("https://mcp.example.test/mcp"),
+      {},
+      {},
+      {
+        fetch: vi.fn(async () =>
+          new UndiciResponse(JSON.stringify({ error: "rate_limited" }), {
+            status: 429,
+            headers: { "content-type": "application/json", "retry-after": "23" },
+          }) as unknown as globalThis.Response,
+        ),
+        resolveHostname: async () => [{ address: "203.0.113.10", family: 4 }],
+      },
+    );
+
+    try {
+      const response = await safeFetch("https://mcp.example.test/token", {
+        method: "POST",
+      });
+      expect(response).toBeInstanceOf(Response);
+      expect(response.status).toBe(429);
+      expect(response.headers.get("retry-after")).toBe("23");
+      await expect(response.json()).resolves.toEqual({ error: "rate_limited" });
+    } finally {
+      await safeFetch.close();
+    }
+  });
+
   it("rejects unsafe URLs and oversized URLs before network access", () => {
     expect(() => validateUrl("http://remote.example/mcp")).toThrow("HTTPS");
     expect(() => validateUrl("https://user:pass@example.com/mcp")).toThrow("credentials");

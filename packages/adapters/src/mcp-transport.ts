@@ -170,6 +170,19 @@ export function secureFetch(
     if (response.status >= 300 && response.status < 400) {
       throw new Error("MCP redirects are not permitted; configure the final HTTPS URL explicitly");
     }
+    // `dispatcherFetch` comes from the installed undici package while the MCP
+    // SDK checks responses against Node's global `Response` constructor. Those
+    // are different realms, so an undici response fails `instanceof Response`
+    // and OAuth error parsing sees the literal string "[object Response]".
+    // Re-wrap the body stream in the global realm without buffering it so MCP
+    // streaming and OAuth token responses retain their semantics.
+    if (!(response instanceof Response)) {
+      return new Response(response.body as unknown as BodyInit, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    }
     return response;
   };
   const result = request as SafeRemoteFetch;
