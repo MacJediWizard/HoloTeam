@@ -911,6 +911,52 @@ export function createRouter(deps: RouterDeps) {
         await deps.oauthLogins.cancel(input.loginId, context.actor);
         return { ok: true as const };
       }),
+      disconnect: authed.models.disconnect.handler(async ({ context, input }) => {
+        const credential = await deps.prisma.userModelCredential.findFirst({
+          where: { userId: context.actor.userId, provider: input.provider },
+          orderBy: newestModelCredentialOrder,
+        });
+        if (!credential) return { ok: true as const };
+
+        const [defaultPreference, assignedBot] = await Promise.all([
+          deps.prisma.spaceModelPreference.findFirst({
+            where: {
+              userId: context.actor.userId,
+              credentialId: credential.id,
+              isDefault: true,
+            },
+            select: { id: true },
+          }),
+          deps.prisma.bot.findFirst({
+            where: {
+              userId: context.actor.userId,
+              modelProvider: input.provider,
+              archivedAt: null,
+            },
+            select: { name: true },
+          }),
+        ]);
+        if (defaultPreference) {
+          throw new ORPCError("CONFLICT", {
+            message: "Choose another default model before disconnecting this provider.",
+          });
+        }
+        if (assignedBot) {
+          throw new ORPCError("CONFLICT", {
+            message: `${assignedBot.name} still uses this provider. Assign that employee another model first.`,
+          });
+        }
+
+        await deps.prisma.$transaction(async (tx) => {
+          await tx.userModelCredential.delete({ where: { id: credential.id } });
+          await deleteUnreferencedCredentialSecret(tx, {
+            credentialKind: "model",
+            credentialId: credential.id,
+            secretId: credential.secretId,
+          });
+        });
+        return { ok: true as const };
+      }),
       setDefault: authed.models.setDefault.handler(async ({ context, input }) => {
         await withSerializableRetry(() =>
           deps.prisma.$transaction(

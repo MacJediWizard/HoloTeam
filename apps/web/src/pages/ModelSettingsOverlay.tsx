@@ -71,7 +71,7 @@ export function ModelSettingsOverlay({
   const [modelProbe] = useState(() => createModelProbe(setProbe));
   const resetOpenAiCompatibleProbe = modelProbe.reset;
   const [loading, setLoading] = useState(true);
-  const [pending, setPending] = useState<"connect" | "default" | null>(null);
+  const [pending, setPending] = useState<"connect" | "default" | "disconnect" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const detailScrollRef = useRef<HTMLDivElement>(null);
@@ -267,6 +267,30 @@ export function ModelSettingsOverlay({
       setNotice(isOpenAiCompatible ? t`Model updated.` : t`Now using ${selected.label}.`);
     } catch (err) {
       setError(err instanceof Error ? err.message : t`Could not change the default model`);
+    } finally {
+      setPending(null);
+    }
+  }
+
+  async function disconnectModel() {
+    if (!credential || !selected) return;
+    if (
+      !window.confirm(
+        `Disconnect ${selected.providerName}? The saved credential will be permanently removed.`,
+      )
+    ) {
+      return;
+    }
+    setError(null);
+    setNotice(null);
+    setPending("disconnect");
+    try {
+      await rpc.models.disconnect({ provider: credential.provider });
+      await refresh();
+      setApiKey("");
+      setNotice(t`Model provider disconnected.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t`Could not disconnect model provider`);
     } finally {
       setPending(null);
     }
@@ -826,6 +850,31 @@ export function ModelSettingsOverlay({
                       <Trans>Use this model</Trans>
                     )}
                   </Button>
+                </div>
+              ) : null}
+
+              {credential ? (
+                <div className="mt-6 border-t border-border pt-5">
+                  <Button
+                    type="button"
+                    variant="destructive"
+                    className="rounded-full"
+                    size="sm"
+                    disabled={busy}
+                    onClick={() => void disconnectModel()}
+                  >
+                    {pending === "disconnect" ? (
+                      <Trans>Disconnecting…</Trans>
+                    ) : (
+                      <Trans>Disconnect provider</Trans>
+                    )}
+                  </Button>
+                  <p className="mt-2 text-[13px] leading-[1.5] text-muted-foreground">
+                    <Trans>
+                      Removes the saved credential. Providers still used by the default model or an
+                      active employee cannot be disconnected.
+                    </Trans>
+                  </p>
                 </div>
               ) : null}
             </>
